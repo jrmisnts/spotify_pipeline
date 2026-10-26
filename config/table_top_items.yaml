@@ -1,0 +1,66 @@
+# Sumber kebenaran pipeline.
+# Saat ini hanya blok `bronze` yang dipakai (ingestion Python, dua tahap).
+# Blok `silver` ditambahkan nanti, dibaca oleh generator model dbt.
+#
+# Alur bronze:
+#   1. extract : Spotify API -> file JSON di landing   (ingestion/extract_to_landing.py)
+#   2. load    : file landing -> tabel bronze Postgres (ingestion/load_bronze.py)
+#
+# Setiap file landing berisi envelope JSON:
+#   {extract_date, run_id, item_type, <key iterate, mis. time_range>, fetched_at, _request, payload}
+# Kolom bronze diisi dari key envelope dengan nama yang sama, kecuali:
+#   - source_file : path file relatif terhadap landing.path (diisi loader; dasar idempotensi)
+#   - kolom dengan `default` : diisi oleh Postgres
+
+tables:
+  top_items:
+    bronze:
+      landing:
+        path: data/landing/top_items     # relatif terhadap root project; nanti bisa diganti s3://...
+        format: json
+      extract:
+        requests:
+          - item_type: artists
+            method: current_user_top_artists      # nama method di spotipy
+            params: {limit: 50}
+            iterate:                              # satu panggilan API (satu file) per nilai
+              time_range: [short_term, medium_term, long_term]
+          - item_type: tracks
+            method: current_user_top_tracks
+            params: {limit: 50}
+            iterate:
+              time_range: [short_term, medium_term, long_term]
+      load:
+        table: bronze.top_items
+        primary_keys: [source_file]
+        columns:
+          - {name: source_file,         type: text}
+          - {name: extract_date,        type: date}
+          - {name: run_id,              type: text}
+          - {name: item_type,           type: text}
+          - {name: time_range,          type: text}
+          - {name: fetched_at,          type: timestamptz}
+          - {name: payload,             type: jsonb}
+          - {name: ingested_timestamp,  type: timestamptz, default: now()}
+
+  recently_played:
+    bronze:
+      landing:
+        path: data/landing/recently_played
+        format: json
+      extract:
+        requests:
+          - item_type: tracks
+            method: current_user_recently_played
+            params: {limit: 50}
+      load:
+        table: bronze.recently_played
+        primary_keys: [source_file]
+        columns:
+          - {name: source_file,         type: text}
+          - {name: extract_date,        type: date}
+          - {name: run_id,              type: text}
+          - {name: item_type,           type: text}
+          - {name: fetched_at,          type: timestamptz}
+          - {name: payload,             type: jsonb}
+          - {name: ingested_timestamp,  type: timestamptz, default: now()}
